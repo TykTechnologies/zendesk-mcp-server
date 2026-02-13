@@ -142,6 +142,20 @@ async def handle_list_tools() -> list[types.Tool]:
             }
         ),
         types.Tool(
+            name="get_organization",
+            description="Retrieve a Zendesk organization by its ID. Returns org name, domain names, details, notes, tags, and other metadata.",
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "organization_id": {
+                        "type": "integer",
+                        "description": "The ID of the organization to retrieve"
+                    }
+                },
+                "required": ["organization_id"]
+            }
+        ),
+        types.Tool(
             name="create_ticket",
             description="Create a new Zendesk ticket",
             inputSchema={
@@ -318,6 +332,15 @@ async def handle_call_tool(
             return [types.TextContent(
                 type="text",
                 text=json.dumps(ticket)
+            )]
+
+        elif name == "get_organization":
+            if not arguments:
+                raise ValueError("Missing arguments")
+            org = zendesk_client.get_organization(arguments["organization_id"])
+            return [types.TextContent(
+                type="text",
+                text=json.dumps(org)
             )]
 
         elif name == "create_ticket":

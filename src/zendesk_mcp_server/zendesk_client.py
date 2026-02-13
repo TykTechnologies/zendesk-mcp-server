@@ -17,6 +17,29 @@ class ZendeskClient:
             token=token
         )
 
+    def get_organization(self, organization_id: int) -> Dict[str, Any]:
+        """
+        Get organization details by ID.
+        """
+        try:
+            org = self.client.organizations(id=organization_id)
+            return {
+                'id': org.id,
+                'name': org.name,
+                'details': getattr(org, 'details', None),
+                'notes': getattr(org, 'notes', None),
+                'domain_names': list(getattr(org, 'domain_names', []) or []),
+                'tags': list(getattr(org, 'tags', []) or []),
+                'group_id': getattr(org, 'group_id', None),
+                'shared_tickets': getattr(org, 'shared_tickets', None),
+                'shared_comments': getattr(org, 'shared_comments', None),
+                'external_id': getattr(org, 'external_id', None),
+                'created_at': str(getattr(org, 'created_at', '')),
+                'updated_at': str(getattr(org, 'updated_at', '')),
+            }
+        except Exception as e:
+            raise Exception(f"Failed to get organization {organization_id}: {str(e)}")
+
     def get_ticket(self, ticket_id: int) -> Dict[str, Any]:
         """
         Query a ticket by its ID
