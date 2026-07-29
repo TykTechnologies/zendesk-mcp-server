@@ -2,15 +2,12 @@ import asyncio
 import json
 import logging
 import os
-from typing import Any, Dict
+from datetime import datetime
+from typing import Any, Literal
 
 from cachetools.func import ttl_cache
 from dotenv import load_dotenv
-from mcp.server import InitializationOptions, NotificationOptions
-from mcp.server import Server
-from mcp.server.stdio import stdio_server
-import mcp.types as types
-from pydantic import AnyUrl
+from mcp.server import MCPServer
 
 from zendesk_mcp_server.zendesk_client import ZendeskClient
 
@@ -29,7 +26,7 @@ zendesk_client = ZendeskClient(
     token=os.getenv("ZENDESK_API_KEY")
 )
 
-server = Server("Zendesk Server")
+server = MCPServer("zendesk-server", version="0.1.0")
 
 TICKET_ANALYSIS_TEMPLATE = """
 You are a helpful Zendesk support analyst. You've been asked to analyze ticket #{ticket_id}.
@@ -56,412 +53,147 @@ The response should be formatted well and ready to be posted as a comment.
 """
 
 
-@server.list_prompts()
-async def handle_list_prompts() -> list[types.Prompt]:
-    """List available prompts"""
-    return [
-        types.Prompt(
-            name="analyze-ticket",
-            description="Analyze a Zendesk ticket and provide insights",
-            arguments=[
-                types.PromptArgument(
-                    name="ticket_id",
-                    description="The ID of the ticket to analyze",
-                    required=True,
-                )
-            ],
-        ),
-        types.Prompt(
-            name="draft-ticket-response",
-            description="Draft a professional response to a Zendesk ticket",
-            arguments=[
-                types.PromptArgument(
-                    name="ticket_id",
-                    description="The ID of the ticket to respond to",
-                    required=True,
-                )
-            ],
-        )
-    ]
+@server.prompt(name="analyze-ticket", description="Analyze a Zendesk ticket and provide insights")
+def analyze_ticket(ticket_id: str) -> str:
+    return TICKET_ANALYSIS_TEMPLATE.format(ticket_id=ticket_id).strip()
 
 
-@server.get_prompt()
-async def handle_get_prompt(name: str, arguments: Dict[str, str] | None) -> types.GetPromptResult:
-    """Handle prompt requests"""
-    if not arguments or "ticket_id" not in arguments:
-        raise ValueError("Missing required argument: ticket_id")
-
-    ticket_id = int(arguments["ticket_id"])
-    try:
-        if name == "analyze-ticket":
-            prompt = TICKET_ANALYSIS_TEMPLATE.format(
-                ticket_id=ticket_id
-            )
-            description = f"Analysis prompt for ticket #{ticket_id}"
-
-        elif name == "draft-ticket-response":
-            prompt = COMMENT_DRAFT_TEMPLATE.format(
-                ticket_id=ticket_id
-            )
-            description = f"Response draft prompt for ticket #{ticket_id}"
-
-        else:
-            raise ValueError(f"Unknown prompt: {name}")
-
-        return types.GetPromptResult(
-            description=description,
-            messages=[
-                types.PromptMessage(
-                    role="user",
-                    content=types.TextContent(type="text", text=prompt.strip()),
-                )
-            ],
-        )
-
-    except Exception as e:
-        logger.error(f"Error generating prompt: {e}")
-        raise
+@server.prompt(name="draft-ticket-response", description="Draft a professional response to a Zendesk ticket")
+def draft_ticket_response(ticket_id: str) -> str:
+    return COMMENT_DRAFT_TEMPLATE.format(ticket_id=ticket_id).strip()
 
 
-@server.list_tools()
-async def handle_list_tools() -> list[types.Tool]:
-    """List available Zendesk tools"""
-    return [
-        types.Tool(
-            name="get_ticket",
-            description="Retrieve a Zendesk ticket by its ID",
-            inputSchema={
-                "type": "object",
-                "properties": {
-                    "ticket_id": {
-                        "type": "integer",
-                        "description": "The ID of the ticket to retrieve"
-                    }
-                },
-                "required": ["ticket_id"]
-            }
-        ),
-        types.Tool(
-            name="get_organization",
-            description="Retrieve a Zendesk organization by its ID. Returns org name, domain names, details, notes, tags, and other metadata.",
-            inputSchema={
-                "type": "object",
-                "properties": {
-                    "organization_id": {
-                        "type": "integer",
-                        "description": "The ID of the organization to retrieve"
-                    }
-                },
-                "required": ["organization_id"]
-            }
-        ),
-        types.Tool(
-            name="create_ticket",
-            description="Create a new Zendesk ticket",
-            inputSchema={
-                "type": "object",
-                "properties": {
-                    "subject": {"type": "string", "description": "Ticket subject"},
-                    "description": {"type": "string", "description": "Ticket description"},
-                    "requester_id": {"type": "integer"},
-                    "assignee_id": {"type": "integer"},
-                    "priority": {"type": "string", "description": "low, normal, high, urgent"},
-                    "type": {"type": "string", "description": "problem, incident, question, task"},
-                    "tags": {"type": "array", "items": {"type": "string"}},
-                    "custom_fields": {"type": "array", "items": {"type": "object"}},
-                },
-                "required": ["subject", "description"],
-            }
-        ),
-        types.Tool(
-            name="search_tickets",
-            description="Search Zendesk tickets with filters for status, priority, assignee, requester, commenter, dates, and more",
-            inputSchema={
-                "type": "object",
-                "properties": {
-                    "query": {
-                        "type": "string",
-                        "description": "Free text search query"
-                    },
-                    "status": {
-                        "type": "string",
-                        "description": "Filter by status",
-                        "enum": ["new", "open", "pending", "hold", "solved", "closed"]
-                    },
-                    "priority": {
-                        "type": "string",
-                        "description": "Filter by priority",
-                        "enum": ["low", "normal", "high", "urgent"]
-                    },
-                    "assignee": {
-                        "type": "integer",
-                        "description": "Filter by assignee user ID"
-                    },
-                    "requester": {
-                        "type": "integer",
-                        "description": "Filter by requester user ID"
-                    },
-                    "commenter": {
-                        "type": "integer",
-                        "description": "Filter by commenter user ID (tickets where this user commented)"
-                    },
-                    "group": {
-                        "type": "integer",
-                        "description": "Filter by group ID"
-                    },
-                    "organization": {
-                        "type": "integer",
-                        "description": "Filter by organization ID"
-                    },
-                    "tags": {
-                        "type": "array",
-                        "items": {"type": "string"},
-                        "description": "Filter by tags"
-                    },
-                    "created_after": {
-                        "type": "string",
-                        "description": "Tickets created after this date (ISO 8601 format)"
-                    },
-                    "created_before": {
-                        "type": "string",
-                        "description": "Tickets created before this date (ISO 8601 format)"
-                    },
-                    "updated_after": {
-                        "type": "string",
-                        "description": "Tickets updated after this date (ISO 8601 format)"
-                    },
-                    "updated_before": {
-                        "type": "string",
-                        "description": "Tickets updated before this date (ISO 8601 format)"
-                    },
-                    "sort_by": {
-                        "type": "string",
-                        "description": "Field to sort by (created_at, updated_at, priority, status)",
-                        "default": "created_at"
-                    },
-                    "sort_order": {
-                        "type": "string",
-                        "description": "Sort order (asc or desc)",
-                        "default": "desc"
-                    },
-                    "page": {
-                        "type": "integer",
-                        "description": "Page number",
-                        "default": 1
-                    },
-                    "per_page": {
-                        "type": "integer",
-                        "description": "Number of tickets per page (max 100)",
-                        "default": 25
-                    }
-                },
-                "required": []
-            }
-        ),
-        types.Tool(
-            name="get_ticket_comments",
-            description="Retrieve all comments for a Zendesk ticket by its ID",
-            inputSchema={
-                "type": "object",
-                "properties": {
-                    "ticket_id": {
-                        "type": "integer",
-                        "description": "The ID of the ticket to get comments for"
-                    }
-                },
-                "required": ["ticket_id"]
-            }
-        ),
-        types.Tool(
-            name="create_ticket_comment",
-            description="Create a new comment on an existing Zendesk ticket",
-            inputSchema={
-                "type": "object",
-                "properties": {
-                    "ticket_id": {
-                        "type": "integer",
-                        "description": "The ID of the ticket to comment on"
-                    },
-                    "comment": {
-                        "type": "string",
-                        "description": "The comment text/content to add"
-                    },
-                    "public": {
-                        "type": "boolean",
-                        "description": "Whether the comment should be public",
-                        "default": True
-                    }
-                },
-                "required": ["ticket_id", "comment"]
-            }
-        ),
-        types.Tool(
-            name="update_ticket",
-            description="Update fields on an existing Zendesk ticket (e.g., status, priority, assignee_id)",
-            inputSchema={
-                "type": "object",
-                "properties": {
-                    "ticket_id": {"type": "integer", "description": "The ID of the ticket to update"},
-                    "subject": {"type": "string"},
-                    "status": {"type": "string", "description": "new, open, pending, on-hold, solved, closed"},
-                    "priority": {"type": "string", "description": "low, normal, high, urgent"},
-                    "type": {"type": "string"},
-                    "assignee_id": {"type": "integer"},
-                    "requester_id": {"type": "integer"},
-                    "tags": {"type": "array", "items": {"type": "string"}},
-                    "custom_fields": {"type": "array", "items": {"type": "object"}},
-                    "due_at": {"type": "string", "description": "ISO8601 datetime"}
-                },
-                "required": ["ticket_id"]
-            }
-        )
-    ]
+@server.tool(name="get_ticket", description="Retrieve a Zendesk ticket by its ID")
+def get_ticket(ticket_id: int) -> str:
+    ticket = zendesk_client.get_ticket(ticket_id)
+    return json.dumps(ticket)
 
 
-@server.call_tool()
-async def handle_call_tool(
-        name: str,
-        arguments: dict[str, Any] | None
-) -> list[types.TextContent]:
-    """Handle Zendesk tool execution requests"""
-    try:
-        if name == "get_ticket":
-            if not arguments:
-                raise ValueError("Missing arguments")
-            ticket = zendesk_client.get_ticket(arguments["ticket_id"])
-            return [types.TextContent(
-                type="text",
-                text=json.dumps(ticket)
-            )]
-
-        elif name == "get_organization":
-            if not arguments:
-                raise ValueError("Missing arguments")
-            org = zendesk_client.get_organization(arguments["organization_id"])
-            return [types.TextContent(
-                type="text",
-                text=json.dumps(org)
-            )]
-
-        elif name == "create_ticket":
-            if not arguments:
-                raise ValueError("Missing arguments")
-            created = zendesk_client.create_ticket(
-                subject=arguments.get("subject"),
-                description=arguments.get("description"),
-                requester_id=arguments.get("requester_id"),
-                assignee_id=arguments.get("assignee_id"),
-                priority=arguments.get("priority"),
-                type=arguments.get("type"),
-                tags=arguments.get("tags"),
-                custom_fields=arguments.get("custom_fields"),
-            )
-            return [types.TextContent(
-                type="text",
-                text=json.dumps({"message": "Ticket created successfully", "ticket": created}, indent=2)
-            )]
-
-        elif name == "search_tickets":
-            from datetime import datetime
-
-            # Parse date strings to datetime objects if provided
-            created_after = None
-            created_before = None
-            updated_after = None
-            updated_before = None
-
-            if arguments:
-                if arguments.get("created_after"):
-                    created_after = datetime.fromisoformat(arguments["created_after"].replace("Z", "+00:00"))
-                if arguments.get("created_before"):
-                    created_before = datetime.fromisoformat(arguments["created_before"].replace("Z", "+00:00"))
-                if arguments.get("updated_after"):
-                    updated_after = datetime.fromisoformat(arguments["updated_after"].replace("Z", "+00:00"))
-                if arguments.get("updated_before"):
-                    updated_before = datetime.fromisoformat(arguments["updated_before"].replace("Z", "+00:00"))
-
-            tickets = zendesk_client.search_tickets(
-                query=arguments.get("query") if arguments else None,
-                status=arguments.get("status") if arguments else None,
-                priority=arguments.get("priority") if arguments else None,
-                assignee=arguments.get("assignee") if arguments else None,
-                requester=arguments.get("requester") if arguments else None,
-                commenter=arguments.get("commenter") if arguments else None,
-                group=arguments.get("group") if arguments else None,
-                organization=arguments.get("organization") if arguments else None,
-                tags=arguments.get("tags") if arguments else None,
-                created_after=created_after,
-                created_before=created_before,
-                updated_after=updated_after,
-                updated_before=updated_before,
-                sort_by=arguments.get("sort_by", "created_at") if arguments else "created_at",
-                sort_order=arguments.get("sort_order", "desc") if arguments else "desc",
-                page=arguments.get("page", 1) if arguments else 1,
-                per_page=arguments.get("per_page", 25) if arguments else 25,
-            )
-            return [types.TextContent(
-                type="text",
-                text=json.dumps(tickets, indent=2)
-            )]
-
-        elif name == "get_ticket_comments":
-            if not arguments:
-                raise ValueError("Missing arguments")
-            comments = zendesk_client.get_ticket_comments(
-                arguments["ticket_id"])
-            return [types.TextContent(
-                type="text",
-                text=json.dumps(comments)
-            )]
-
-        elif name == "create_ticket_comment":
-            if not arguments:
-                raise ValueError("Missing arguments")
-            public = arguments.get("public", True)
-            result = zendesk_client.post_comment(
-                ticket_id=arguments["ticket_id"],
-                comment=arguments["comment"],
-                public=public
-            )
-            return [types.TextContent(
-                type="text",
-                text=f"Comment created successfully: {result}"
-            )]
-
-        elif name == "update_ticket":
-            if not arguments:
-                raise ValueError("Missing arguments")
-            ticket_id = arguments.get("ticket_id")
-            if ticket_id is None:
-                raise ValueError("ticket_id is required")
-            update_fields = {k: v for k, v in arguments.items() if k != "ticket_id"}
-            updated = zendesk_client.update_ticket(ticket_id=int(ticket_id), **update_fields)
-            return [types.TextContent(
-                type="text",
-                text=json.dumps({"message": "Ticket updated successfully", "ticket": updated}, indent=2)
-            )]
-
-        else:
-            raise ValueError(f"Unknown tool: {name}")
-
-    except Exception as e:
-        return [types.TextContent(
-            type="text",
-            text=f"Error: {str(e)}"
-        )]
+@server.tool(name="get_organization", description="Retrieve a Zendesk organization by its ID. Returns org name, domain names, details, notes, tags, and other metadata.")
+def get_organization(organization_id: int) -> str:
+    org = zendesk_client.get_organization(organization_id)
+    return json.dumps(org)
 
 
-@server.list_resources()
-async def handle_list_resources() -> list[types.Resource]:
-    logger.debug("Handling list_resources request")
-    return [
-        types.Resource(
-            uri=AnyUrl("zendesk://knowledge-base"),
-            name="Zendesk Knowledge Base",
-            description="Access to Zendesk Help Center articles and sections",
-            mimeType="application/json",
-        )
-    ]
+@server.tool(name="create_ticket", description="Create a new Zendesk ticket")
+def create_ticket(
+    subject: str,
+    description: str,
+    requester_id: int | None = None,
+    assignee_id: int | None = None,
+    priority: str | None = None,
+    type: str | None = None,
+    tags: list[str] | None = None,
+    custom_fields: list[dict] | None = None,
+) -> str:
+    created = zendesk_client.create_ticket(
+        subject=subject,
+        description=description,
+        requester_id=requester_id,
+        assignee_id=assignee_id,
+        priority=priority,
+        type=type,
+        tags=tags,
+        custom_fields=custom_fields,
+    )
+    return json.dumps({"message": "Ticket created successfully", "ticket": created}, indent=2)
+
+
+@server.tool(name="search_tickets", description="Search Zendesk tickets with filters for status, priority, assignee, requester, commenter, dates, and more")
+def search_tickets(
+    query: str | None = None,
+    status: Literal["new", "open", "pending", "hold", "solved", "closed"] | None = None,
+    priority: Literal["low", "normal", "high", "urgent"] | None = None,
+    assignee: int | None = None,
+    requester: int | None = None,
+    commenter: int | None = None,
+    group: int | None = None,
+    organization: int | None = None,
+    tags: list[str] | None = None,
+    created_after: str | None = None,
+    created_before: str | None = None,
+    updated_after: str | None = None,
+    updated_before: str | None = None,
+    sort_by: str = "created_at",
+    sort_order: str = "desc",
+    page: int = 1,
+    per_page: int = 25,
+) -> str:
+    ca = datetime.fromisoformat(created_after.replace("Z", "+00:00")) if created_after else None
+    cb = datetime.fromisoformat(created_before.replace("Z", "+00:00")) if created_before else None
+    ua = datetime.fromisoformat(updated_after.replace("Z", "+00:00")) if updated_after else None
+    ub = datetime.fromisoformat(updated_before.replace("Z", "+00:00")) if updated_before else None
+
+    tickets = zendesk_client.search_tickets(
+        query=query,
+        status=status,
+        priority=priority,
+        assignee=assignee,
+        requester=requester,
+        commenter=commenter,
+        group=group,
+        organization=organization,
+        tags=tags,
+        created_after=ca,
+        created_before=cb,
+        updated_after=ua,
+        updated_before=ub,
+        sort_by=sort_by,
+        sort_order=sort_order,
+        page=page,
+        per_page=per_page,
+    )
+    return json.dumps(tickets, indent=2)
+
+
+@server.tool(name="get_ticket_comments", description="Retrieve all comments for a Zendesk ticket by its ID")
+def get_ticket_comments(ticket_id: int) -> str:
+    comments = zendesk_client.get_ticket_comments(ticket_id)
+    return json.dumps(comments)
+
+
+@server.tool(name="create_ticket_comment", description="Create a new comment on an existing Zendesk ticket")
+def create_ticket_comment(ticket_id: int, comment: str, public: bool = True) -> str:
+    result = zendesk_client.post_comment(
+        ticket_id=ticket_id,
+        comment=comment,
+        public=public
+    )
+    return f"Comment created successfully: {result}"
+
+
+@server.tool(name="update_ticket", description="Update fields on an existing Zendesk ticket (e.g., status, priority, assignee_id)")
+def update_ticket(
+    ticket_id: int,
+    subject: str | None = None,
+    status: str | None = None,
+    priority: str | None = None,
+    type: str | None = None,
+    assignee_id: int | None = None,
+    requester_id: int | None = None,
+    tags: list[str] | None = None,
+    custom_fields: list[dict] | None = None,
+    due_at: str | None = None,
+) -> str:
+    update_fields = {k: v for k, v in {
+        "subject": subject, "status": status, "priority": priority,
+        "type": type, "assignee_id": assignee_id, "requester_id": requester_id,
+        "tags": tags, "custom_fields": custom_fields, "due_at": due_at,
+    }.items() if v is not None}
+    updated = zendesk_client.update_ticket(ticket_id=ticket_id, **update_fields)
+    return json.dumps({"message": "Ticket updated successfully", "ticket": updated}, indent=2)
+
+
+@server.resource("zendesk://knowledge-base", name="Zendesk Knowledge Base", description="Access to Zendesk Help Center articles and sections", mime_type="application/json")
+def knowledge_base() -> str:
+    kb_data = get_cached_kb()
+    return json.dumps({
+        "knowledge_base": kb_data,
+        "metadata": {
+            "sections": len(kb_data),
+            "total_articles": sum(len(section['articles']) for section in kb_data.values()),
+        }
+    }, indent=2)
 
 
 @ttl_cache(ttl=3600)
@@ -469,47 +201,8 @@ def get_cached_kb():
     return zendesk_client.get_all_articles()
 
 
-@server.read_resource()
-async def handle_read_resource(uri: AnyUrl) -> str:
-    logger.debug(f"Handling read_resource request for URI: {uri}")
-    if uri.scheme != "zendesk":
-        logger.error(f"Unsupported URI scheme: {uri.scheme}")
-        raise ValueError(f"Unsupported URI scheme: {uri.scheme}")
-
-    path = str(uri).replace("zendesk://", "")
-    if path != "knowledge-base":
-        logger.error(f"Unknown resource path: {path}")
-        raise ValueError(f"Unknown resource path: {path}")
-
-    try:
-        kb_data = get_cached_kb()
-        return json.dumps({
-            "knowledge_base": kb_data,
-            "metadata": {
-                "sections": len(kb_data),
-                "total_articles": sum(len(section['articles']) for section in kb_data.values()),
-            }
-        }, indent=2)
-    except Exception as e:
-        logger.error(f"Error fetching knowledge base: {e}")
-        raise
-
-
 async def main():
-    # Run the server using stdin/stdout streams
-    async with stdio_server() as (read_stream, write_stream):
-        await server.run(
-            read_stream=read_stream,
-            write_stream=write_stream,
-            initialization_options=InitializationOptions(
-                server_name="Zendesk",
-                server_version="0.1.0",
-                capabilities=server.get_capabilities(
-                    notification_options=NotificationOptions(),
-                    experimental_capabilities={},
-                ),
-            ),
-        )
+    await server.run_stdio_async()
 
 
 if __name__ == "__main__":
