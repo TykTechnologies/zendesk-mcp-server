@@ -56,7 +56,8 @@ class ZendeskClient:
                 'updated_at': str(ticket.updated_at),
                 'requester_id': ticket.requester_id,
                 'assignee_id': ticket.assignee_id,
-                'organization_id': ticket.organization_id
+                'organization_id': ticket.organization_id,
+                'custom_fields': ticket.custom_fields,
             }
         except Exception as e:
             raise Exception(f"Failed to get ticket {ticket_id}: {str(e)}")
@@ -202,6 +203,7 @@ class ZendeskClient:
                     'updated_at': str(ticket.updated_at),
                     'requester_id': ticket.requester_id,
                     'assignee_id': ticket.assignee_id,
+                    'custom_fields': ticket.custom_fields,
                 })
                 collected += 1
             else:
