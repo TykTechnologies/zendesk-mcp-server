@@ -75,6 +75,12 @@ def get_organization(organization_id: int) -> str:
     return json.dumps(org)
 
 
+@server.tool(name="search_organizations", description="Find Zendesk organizations by name. Returns up to 10 matches, each with id and name only. Use the id with get_organization or the organization filter of search_tickets.")
+def search_organizations(name: str) -> str:
+    orgs = zendesk_client.search_organizations(name)
+    return json.dumps(orgs)
+
+
 @server.tool(name="create_ticket", description="Create a new Zendesk ticket")
 def create_ticket(
     subject: str,

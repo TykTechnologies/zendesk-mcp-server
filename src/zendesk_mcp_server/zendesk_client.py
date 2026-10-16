@@ -40,6 +40,26 @@ class ZendeskClient:
         except Exception as e:
             raise Exception(f"Failed to get organization {organization_id}: {str(e)}")
 
+    def search_organizations(self, name: str, limit: int = 10) -> List[Dict[str, Any]]:
+        """
+        Find organizations by name. Returns id and name only, at most `limit` matches.
+        """
+        # The name is placed inside a quoted name:"..." term, so strip characters that could
+        # close the quote or escape it and smuggle in other search terms.
+        clean = name.replace('"', ' ').replace('\\', ' ').strip()
+        if not clean:
+            return []
+        try:
+            results = self.client.search(type='organization', name=clean)
+            matches = []
+            for org in results:
+                if len(matches) >= limit:
+                    break
+                matches.append({'id': org.id, 'name': org.name})
+            return matches
+        except Exception as e:
+            raise Exception(f"Failed to search organizations: {str(e)}")
+
     def get_ticket(self, ticket_id: int) -> Dict[str, Any]:
         """
         Query a ticket by its ID
@@ -203,6 +223,7 @@ class ZendeskClient:
                     'updated_at': str(ticket.updated_at),
                     'requester_id': ticket.requester_id,
                     'assignee_id': ticket.assignee_id,
+                    'organization_id': ticket.organization_id,
                     'custom_fields': ticket.custom_fields,
                 })
                 collected += 1
