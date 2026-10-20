@@ -81,6 +81,29 @@ def search_organizations(name: str) -> str:
     return json.dumps(orgs)
 
 
+@server.tool(name="update_organization", description="Update fields on a Zendesk organization (e.g., notes, tags, details, domain_names)")
+def update_organization(
+    organization_id: int,
+    name: str | None = None,
+    details: str | None = None,
+    notes: str | None = None,
+    domain_names: list[str] | None = None,
+    tags: list[str] | None = None,
+    group_id: int | None = None,
+    shared_tickets: bool | None = None,
+    shared_comments: bool | None = None,
+    external_id: str | None = None,
+) -> str:
+    update_fields = {k: v for k, v in {
+        "name": name, "details": details, "notes": notes,
+        "domain_names": domain_names, "tags": tags, "group_id": group_id,
+        "shared_tickets": shared_tickets, "shared_comments": shared_comments,
+        "external_id": external_id,
+    }.items() if v is not None}
+    updated = zendesk_client.update_organization(organization_id=organization_id, **update_fields)
+    return json.dumps({"message": "Organization updated successfully", "organization": updated}, indent=2)
+
+
 @server.tool(name="create_ticket", description="Create a new Zendesk ticket")
 def create_ticket(
     subject: str,

@@ -60,6 +60,40 @@ class ZendeskClient:
         except Exception as e:
             raise Exception(f"Failed to search organizations: {str(e)}")
 
+    def update_organization(self, organization_id: int, **fields: Any) -> Dict[str, Any]:
+        """
+        Update a Zendesk organization with provided fields.
+
+        Supported fields: name, details, notes, domain_names, tags,
+        group_id, shared_tickets, shared_comments, external_id.
+        """
+        try:
+            org = self.client.organizations(id=organization_id)
+            for key, value in fields.items():
+                if value is None:
+                    continue
+                setattr(org, key, value)
+
+            self.client.organizations.update(org)
+
+            refreshed = self.client.organizations(id=organization_id)
+            return {
+                'id': refreshed.id,
+                'name': refreshed.name,
+                'details': getattr(refreshed, 'details', None),
+                'notes': getattr(refreshed, 'notes', None),
+                'domain_names': list(getattr(refreshed, 'domain_names', []) or []),
+                'tags': list(getattr(refreshed, 'tags', []) or []),
+                'group_id': getattr(refreshed, 'group_id', None),
+                'shared_tickets': getattr(refreshed, 'shared_tickets', None),
+                'shared_comments': getattr(refreshed, 'shared_comments', None),
+                'external_id': getattr(refreshed, 'external_id', None),
+                'created_at': str(getattr(refreshed, 'created_at', '')),
+                'updated_at': str(getattr(refreshed, 'updated_at', '')),
+            }
+        except Exception as e:
+            raise Exception(f"Failed to update organization {organization_id}: {str(e)}")
+
     def get_ticket(self, ticket_id: int) -> Dict[str, Any]:
         """
         Query a ticket by its ID
